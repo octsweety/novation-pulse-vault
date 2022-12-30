@@ -213,19 +213,19 @@ contract TefiVault is Ownable, Pausable, ReentrancyGuard {
 
         uint availableEarned = earned(msg.sender);
         uint _earned = _calculateExpiredEarning(msg.sender);
-        uint left = availableEarned - _earned;
+        uint left = availableEarned - (_earned * 95 / 100);
         
         uint _amount = user.share * balance() / totalShare;
         require (_amount <= available(), "exceeded withdrawable amount");
 
         totalShare -= user.share;
         totalSupply -= user.amount;
-        profits -= _min(profits, _earned);
+        profits -= _min(profits, availableEarned);
         delete users[msg.sender];
 
         uint withdrawalFee = (_amount - availableEarned) * 5 / 100;
         uint profitFee = _earned * 5 / 100;
-        boostFund += (left + profitFee);
+        boostFund += left;
 
         address referral = referrals[msg.sender];
         if (referral != address(0)) {
@@ -234,7 +234,7 @@ contract TefiVault is Ownable, Pausable, ReentrancyGuard {
         } else {
             asset.safeTransfer(treasuryWallet, withdrawalFee + profitFee);
         }
-        _amount -= (withdrawalFee + profitFee + left);
+        _amount -= (withdrawalFee + left);
         
         // asset.safeTransfer(msg.sender, _amount);
         IPayoutAgent(payoutAgent).payout(msg.sender, _amount, _sellback);
