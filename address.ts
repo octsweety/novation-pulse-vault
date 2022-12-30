@@ -7,7 +7,7 @@ export const address = {
         vfx: "0xe06f46AFD251B06152B478d8eE3aCea534063994",
         usdt: "0x55d398326f99059fF775485246999027B3197955",
         strategy: "0x656a0c3aC9900f74305FcC0338DCaD8A8DF4f9BF",
-        vault: "0x7C19BB91c68405CAC0A77727eCe7abF516E5af5D",
+        vault: "0x05054faE1f746581f5bd998A47d9f347454ffE23",
         payoutAgent: "0xA4C1bC4991E722c2ea1Bfa9224eDac12FB7d884a"
     },
     testnet: {
@@ -18,7 +18,7 @@ export const address = {
         vfx: "0x43916De3b9c0b9A2aCdE5D74bF564dD9b6F70649",
         usdt: "0xd7d7F4313A6F098c200aFc4f313DC84301D55Cd1",
         strategy: "0x656a0c3aC9900f74305FcC0338DCaD8A8DF4f9BF",
-        vault: "0xfb5cD656e01727FA78bd3739011Dc1255Bcb3981",
+        vault: "0x5c776dEEb367d8431D044dd3955155257b2c231d",
         payoutAgent: "0xc4e8Bb717d6B083aaab6fcE39bB7fa056FA71Fb0"
     }
 }

@@ -33,6 +33,7 @@ contract TefiVault is Ownable, Pausable, ReentrancyGuard {
     uint public totalShare;
     uint public underlying;
     uint public profits;
+    uint public boostFund;
 
     mapping(address => UserInfo) public users;
     mapping(address => address) public referrals;
@@ -117,7 +118,7 @@ contract TefiVault is Ownable, Pausable, ReentrancyGuard {
     }
 
     function balance() public view returns (uint) {
-        return asset.balanceOf(address(this)) + underlying;
+        return asset.balanceOf(address(this)) + underlying - boostFund;
     }
 
     function available() public view returns (uint) {
@@ -224,6 +225,7 @@ contract TefiVault is Ownable, Pausable, ReentrancyGuard {
 
         uint withdrawalFee = (_amount - availableEarned) * 5 / 100;
         uint profitFee = _earned * 5 / 100;
+        boostFund += (left + profitFee);
 
         address referral = referrals[msg.sender];
         if (referral != address(0)) {
@@ -252,18 +254,20 @@ contract TefiVault is Ownable, Pausable, ReentrancyGuard {
         require (availableEarned > 0, "!earned");
 
         uint _earned = _calculateExpiredEarning(msg.sender);
-        
+        uint left = availableEarned - (_earned * 95 / 100);
         uint share = _min((availableEarned * totalShare / balance()), user.share);
 
         user.share -= share;
         user.claimedAt = block.timestamp;
+        totalShare -= share;
         
         // asset.safeTransfer(msg.sender, _earned);
         address referral = referrals[msg.sender];
         asset.safeTransfer(referral != address(0) ? referral : treasuryWallet, _earned * 5 / 100);
         IPayoutAgent(payoutAgent).payout(msg.sender, _earned * 90 / 100, _sellback);
 
-        profits -= _min(profits, _earned* 95 / 100);
+        profits -= _min(profits, availableEarned);
+        boostFund += left;
 
         emit Claimed(msg.sender, _earned * 90 / 100);
     }
@@ -282,13 +286,17 @@ contract TefiVault is Ownable, Pausable, ReentrancyGuard {
 
         uint compounded = _earned * 90 / 100;
         uint left = availableEarned - (_earned * 95 / 100);
-        uint share = _min((left * totalShare / balance()), user.share);
+        uint bal = balance();
+        uint share1 = availableEarned * totalShare / bal;
+        uint share2 = compounded * (totalShare - share1) / (bal - availableEarned);
         
-        user.share -= share;        
+        user.share -= (share1 - share2);
         user.amount += compounded;
         user.claimedAt = block.timestamp;
+        totalShare -= (share1 - share2);
         totalSupply += compounded;
-        profits -= _min(profits, _earned * 95 / 100);
+        profits -= _min(profits, availableEarned);
+        boostFund += left;
 
         _rebalance();
 
@@ -342,6 +350,7 @@ contract TefiVault is Ownable, Pausable, ReentrancyGuard {
     function reportLose(uint _lose) external onlyStrategy {
         require (_lose <= totalSupply / 2, "wrong lose report");
         // totalSupply -= _lose;
+        // boostFund -= _lose * boostFund / (underlying + available());
         underlying -= _lose;
     }
 
@@ -402,6 +411,15 @@ contract TefiVault is Ownable, Pausable, ReentrancyGuard {
     function updateStrategy(address _strategy) external onlyOwner {
         require (underlying > 0, "existing underlying amount");
         strategy = _strategy;
+    }
+
+    function withdrawBoostFund() external onlyOwner {
+        require (underlying > 0, "existing underlying amount");
+        uint _boostFund = boostFund;
+        uint curBal = available();
+        if (curBal < _boostFund) _boostFund = curBal;
+        asset.safeTransfer(msg.sender, _boostFund);
+        boostFund = 0;
     }
 
     function pause() external onlyOwner {
