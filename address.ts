@@ -18,7 +18,7 @@ export const address = {
         vfx: "0x43916De3b9c0b9A2aCdE5D74bF564dD9b6F70649",
         usdt: "0xd7d7F4313A6F098c200aFc4f313DC84301D55Cd1",
         strategy: "0x656a0c3aC9900f74305FcC0338DCaD8A8DF4f9BF",
-        vault: "0x5c776dEEb367d8431D044dd3955155257b2c231d",
+        vault: "0x46ffD7dd39500AE049fff84e956452E0FCAdeb0C",
         payoutAgent: "0xc4e8Bb717d6B083aaab6fcE39bB7fa056FA71Fb0"
     }
 }

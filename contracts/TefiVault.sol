@@ -38,8 +38,9 @@ contract TefiVault is Ownable, Pausable, ReentrancyGuard {
     mapping(address => UserInfo) public users;
     mapping(address => address) public referrals;
     EnumerableSet.AddressSet userList;
-    mapping(address => bool) investWhitelist;
-    mapping(address => bool) permanentWhitelist;
+    mapping(address => bool) public investWhitelist;
+    mapping(address => bool) public permanentWhitelist;
+    mapping(address => bool) public agents;
 
     uint public rebalanceRate = 20;
     uint public farmPeriod = 60 days;
@@ -50,6 +51,7 @@ contract TefiVault is Ownable, Pausable, ReentrancyGuard {
     uint public constant DUST = 0.1 ether;
 
     event Deposited(address indexed user, uint amount);
+    event BulkDeposited(address indexed user, uint amount);
     event Withdrawn(address indexed user, uint amount);
     event WithdrawnAll(address indexed user, uint amount);
     event Claimed(address indexed user, uint amount);
@@ -126,13 +128,21 @@ contract TefiVault is Ownable, Pausable, ReentrancyGuard {
     }
 
     function balanceOf(address _user) public view returns (uint) {
-        return users[_user].share * balance() / totalShare;
+        return totalShare == 0 ? 0 : users[_user].share * balance() / totalShare;
     }
 
     function principalOf(address _user) public view returns (uint) {
+        if (totalShare == 0) return 0;
         UserInfo storage user = users[_user];
         uint curBal = user.share * balance() / totalShare;
         return curBal > user.amount ? user.amount : curBal;
+    }
+
+    function lostOf(address _user) public view returns (uint) {
+        if (totalShare == 0) return 0;
+        UserInfo storage user = users[_user];
+        uint curBal = user.share * balance() / totalShare;
+        return curBal < user.amount ? (user.amount - curBal) : 0;
     }
 
     function earned(address _user) public view returns (uint) {
@@ -150,6 +160,53 @@ contract TefiVault is Ownable, Pausable, ReentrancyGuard {
         return totalBal > totalSupply ? (totalBal - totalSupply) : 0;
     }
 
+    function bulkDeposit(address[] calldata _users, uint[] calldata _amounts) external whenNotPaused nonReentrant {
+        require (agents[msg.sender] == true, "!agent");
+        require (_users.length == _amounts.length, "!sets");
+
+        uint totalAmount;
+        uint _totalShare = totalShare;
+        uint poolBal = balance();
+        for (uint i = 0; i < _users.length;) {
+            uint _amount = _amounts[i];
+            address _user = _users[i];
+            require (_amount > 0, "!amount");
+
+            uint share;
+            if (_totalShare == 0) {
+                share = _amount;
+            } else {
+                share = (_amount * _totalShare) / poolBal;
+            }
+
+            users[_user].share += share;
+            users[_user].amount += _amount;
+            investWhitelist[_user] = true;
+
+            if (users[_user].expireAt == 0) {
+                users[_user].expireAt = block.timestamp + farmPeriod;
+            }
+
+            if (!userList.contains(_user)) userList.add(_user);
+
+            poolBal += _amount;
+            totalAmount += _amount;
+            _totalShare += share;
+            unchecked {
+                ++i;
+            }
+        }
+
+        asset.transferFrom(msg.sender, address(this), totalAmount);
+
+        totalSupply += totalAmount;
+        totalShare = _totalShare;
+
+        _rebalance();
+
+        emit BulkDeposited(msg.sender, totalAmount);
+    }
+
     function deposit(uint _amount) external whenNotPaused nonReentrant updateUserList {
         UserInfo storage user = users[msg.sender];
         require (isPublic || investWhitelist[msg.sender], "!investor");
@@ -160,7 +217,7 @@ contract TefiVault is Ownable, Pausable, ReentrancyGuard {
             "expired"
         );
         require (_amount > 0, "!amount");
-        require (balance() - profits + _amount <= maxSupply, "exceeded max supply");
+        require (totalSupply + _amount <= maxSupply, "exceeded max supply");
 
         uint share;
         uint poolBal = balance();
@@ -186,11 +243,11 @@ contract TefiVault is Ownable, Pausable, ReentrancyGuard {
         emit Deposited(msg.sender, _amount);
     }
 
-    function withdraw(uint _amount, bool _sellback) external nonReentrant clearDustShare updateUserList {
+    function withdraw(uint _amount, bool _sellback) external nonReentrant updateUserList clearDustShare {
         UserInfo storage user = users[msg.sender];
         uint principal = principalOf(msg.sender);
         require (principal >= _amount, "exceeded amount");
-        require (_amount <= available() - profits, "exceeded withdrawable amount");
+        require (_amount <= available()- profits, "exceeded withdrawable amount");
         
         uint share = _min((_amount * totalShare / balance()), user.share);
 
@@ -216,7 +273,7 @@ contract TefiVault is Ownable, Pausable, ReentrancyGuard {
         uint left = availableEarned - (_earned * 95 / 100);
         
         uint _amount = user.share * balance() / totalShare;
-        require (_amount <= available(), "exceeded withdrawable amount");
+        require (_amount - availableEarned <= available() - profits, "exceeded withdrawable amount");
 
         totalShare -= user.share;
         totalSupply -= user.amount;
@@ -234,7 +291,7 @@ contract TefiVault is Ownable, Pausable, ReentrancyGuard {
         } else {
             asset.safeTransfer(treasuryWallet, withdrawalFee + profitFee);
         }
-        _amount -= (withdrawalFee + left);
+        _amount -= (withdrawalFee + profitFee + left);
         
         // asset.safeTransfer(msg.sender, _amount);
         IPayoutAgent(payoutAgent).payout(msg.sender, _amount, _sellback);
@@ -246,7 +303,7 @@ contract TefiVault is Ownable, Pausable, ReentrancyGuard {
         emit WithdrawnAll(msg.sender, _amount);
     }
 
-    function claim(bool _sellback) external nonReentrant clearDustShare updateUserList {
+    function claim(bool _sellback) external nonReentrant updateUserList clearDustShare {
         UserInfo storage user = users[msg.sender];
         require (permanentWhitelist[msg.sender] || user.claimedAt < user.expireAt, "expired");
 
@@ -326,17 +383,17 @@ contract TefiVault is Ownable, Pausable, ReentrancyGuard {
     function investable() public view returns (uint) {
         uint curBal = available();
         uint poolBal = curBal + underlying - profits;
-        uint keepBal = rebalanceRate * poolBal / 100;
+        uint keepBal = rebalanceRate * poolBal / 100 + profits;
         
         if (curBal <= keepBal) return 0;
 
         return curBal - keepBal;
     }
 
-    function refillable() external view returns (uint) {
+    function refillable() public view returns (uint) {
         uint curBal = available();
         uint poolBal = curBal + underlying - profits;
-        uint keepBal = rebalanceRate * poolBal / 100;
+        uint keepBal = rebalanceRate * poolBal / 100 + profits;
         
         if (curBal >= keepBal) return 0;
 
@@ -347,19 +404,39 @@ contract TefiVault is Ownable, Pausable, ReentrancyGuard {
         return x > y ? y : x;
     }
 
-    function reportLose(uint _lose) external onlyStrategy {
+    function reportLost(uint _lose) external onlyStrategy nonReentrant {
         require (_lose <= totalSupply / 2, "wrong lose report");
         // totalSupply -= _lose;
         // boostFund -= _lose * boostFund / (underlying + available());
-        underlying -= _lose;
+        uint toInvest;
+        if (_lose <= profits) {
+            toInvest = _lose;
+            profits -= _lose;
+        } else {
+            toInvest = profits;
+            underlying -= (_lose - profits);
+            profits = 0;
+        }
+        asset.safeTransfer(strategy, toInvest);
     }
 
-    function refill(uint _amount) external onlyStrategy {
+    function closed() external onlyStrategy whenPaused {
+        asset.safeTransferFrom(msg.sender, address(this), underlying);
+        underlying = 0;
+    }
+
+    function refill(uint _amount) external onlyStrategy nonReentrant {
         asset.safeTransferFrom(msg.sender, address(this), _amount);
         underlying -= _amount;
     }
 
-    function payout(uint _amount) external {
+    function autoRefill() external onlyStrategy nonReentrant {
+        uint amount = refillable();
+        asset.safeTransferFrom(msg.sender, address(this), amount);
+        underlying -= amount;
+    }
+
+    function payout(uint _amount) external nonReentrant {
         asset.safeTransferFrom(msg.sender, address(this), _amount);
         profits += _amount;
     }
@@ -400,6 +477,10 @@ contract TefiVault is Ownable, Pausable, ReentrancyGuard {
         }
     }
 
+    function setAgent(address _agent, bool _flag) external onlyOwner {
+        agents[_agent] = _flag;
+    }
+
     function updatePayoutAgent(address _agent) external onlyOwner {
         require (_agent != address(0), "!agent");
         
@@ -408,18 +489,29 @@ contract TefiVault is Ownable, Pausable, ReentrancyGuard {
         payoutAgent = _agent;
     }
 
+    function updateMaxSupply(uint _supply) external onlyOwner {
+        maxSupply = _supply;
+    }
+
     function updateStrategy(address _strategy) external onlyOwner {
-        require (underlying > 0, "existing underlying amount");
+        require (underlying == 0, "existing underlying amount");
         strategy = _strategy;
     }
 
     function withdrawBoostFund() external onlyOwner {
-        require (underlying > 0, "existing underlying amount");
+        require (underlying == 0, "existing underlying amount");
         uint _boostFund = boostFund;
         uint curBal = available();
         if (curBal < _boostFund) _boostFund = curBal;
         asset.safeTransfer(msg.sender, _boostFund);
         boostFund = 0;
+    }
+
+    function withdrawInStuck() external onlyOwner {
+        require (totalShare == 0, "existing user fund");
+        require (boostFund == 0, "existing boost fund");
+        uint curBal = available();
+        asset.safeTransfer(msg.sender, curBal);
     }
 
     function pause() external onlyOwner {
