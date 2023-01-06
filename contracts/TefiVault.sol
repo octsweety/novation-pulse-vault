@@ -493,12 +493,12 @@ contract TefiVault is Ownable, Pausable, ReentrancyGuard {
         maxSupply = _supply;
     }
 
-    function updateStrategy(address _strategy) external onlyOwner {
+    function updateStrategy(address _strategy) external onlyOwner whenPaused {
         require (underlying == 0, "existing underlying amount");
         strategy = _strategy;
     }
 
-    function withdrawBoostFund() external onlyOwner {
+    function withdrawBoostFund() external onlyOwner whenPaused nonReentrant {
         require (underlying == 0, "existing underlying amount");
         uint _boostFund = boostFund;
         uint curBal = available();
@@ -507,7 +507,7 @@ contract TefiVault is Ownable, Pausable, ReentrancyGuard {
         boostFund = 0;
     }
 
-    function withdrawInStuck() external onlyOwner {
+    function withdrawInStuck() external onlyOwner whenPaused {
         require (totalShare == 0, "existing user fund");
         require (boostFund == 0, "existing boost fund");
         uint curBal = available();
