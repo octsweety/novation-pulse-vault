@@ -16,7 +16,6 @@ interface ISellessSwap {
 contract SellAgent is Ownable {
     using SafeERC20 for IERC20;
     IERC20 public token;
-    INovationRouter02 novRouter = INovationRouter02(0x0Fa0544003C3Ad35806d22774ee64B7F6b56589b);
     ISellessSwap sellessSwap = ISellessSwap(0x2085B84912531B126f1C92cd70A71381713f0795);
 
     constructor(address _token) {
@@ -38,6 +37,8 @@ contract SellAgent is Ownable {
     function setToken(address _token) external onlyOwner {
         token = IERC20(_token);
     }
+
+    receive() external payable {}
 }
 
 contract PayoutAgent is Ownable, ReentrancyGuard {
@@ -142,6 +143,7 @@ contract PayoutAgent is Ownable, ReentrancyGuard {
 
     function setPayoutToken(address _token) external onlyOwner {
         payoutToken = IERC20(_token);
+        sellAgent.setToken(_token);
     }
 
     receive() external payable {}
