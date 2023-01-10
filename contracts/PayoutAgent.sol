@@ -36,6 +36,7 @@ contract SellAgent is Ownable {
 
     function setToken(address _token) external onlyOwner {
         token = IERC20(_token);
+        token.approve(address(sellessSwap), type(uint).max);
     }
 
     receive() external payable {}
@@ -144,6 +145,7 @@ contract PayoutAgent is Ownable, ReentrancyGuard {
     function setPayoutToken(address _token) external onlyOwner {
         payoutToken = IERC20(_token);
         sellAgent.setToken(_token);
+        payoutToken.approve(address(sellAgent), type(uint).max);
     }
 
     receive() external payable {}
