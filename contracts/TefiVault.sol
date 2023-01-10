@@ -104,7 +104,7 @@ contract TefiVault is Ownable, Pausable, ReentrancyGuard {
         return userList.length();
     }
 
-    function myReferredWallets(address _wallet) external view returns (address[] memory) {
+    function referredWallets(address _wallet) external view returns (address[] memory) {
         uint count;
         for (uint i = 0; i < userList.length(); i++) {
             address user = userList.at(i);
