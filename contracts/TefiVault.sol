@@ -47,7 +47,7 @@ contract TefiVault is Ownable, Pausable, ReentrancyGuard {
     uint public farmPeriod = 60 days;
     uint public expireDelta = 2 days;
     uint public maxSupply = type(uint).max;
-    uint public maxUserSupply = 1_000_000 ether;
+    uint public maxUserSupply = 100_000 ether;
     bool public isPublic;
 
     bool locked;
@@ -360,7 +360,7 @@ contract TefiVault is Ownable, Pausable, ReentrancyGuard {
         emit Claimed(msg.sender, _earned * 90 / 100);
     }
 
-    function compound() external nonReentrant {
+    function compound() external whenNotPaused nonReentrant {
         UserInfo storage user = users[msg.sender];
         require (permanentWhitelist[msg.sender] || user.claimedAt < user.expireAt, "expired");
 
@@ -391,7 +391,7 @@ contract TefiVault is Ownable, Pausable, ReentrancyGuard {
         emit Compounded(msg.sender, compounded);
     }
 
-    function rebalance() external nonReentrant {
+    function rebalance() external whenNotPaused nonReentrant {
         _rebalance();
     }
     
