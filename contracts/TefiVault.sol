@@ -34,6 +34,7 @@ contract TefiVault is Ownable, Pausable, ReentrancyGuard {
     uint public underlying;
     uint public profits;
     uint public boostFund;
+    mapping (uint => uint) public dailyProfit;
 
     mapping(address => UserInfo) public users;
     mapping(address => address) public referrals;
@@ -431,6 +432,10 @@ contract TefiVault is Ownable, Pausable, ReentrancyGuard {
         return keepBal - curBal;
     }
 
+    function todayProfit() external view returns (uint) {
+        return dailyProfit[block.timestamp / 1 days * 1 days];
+    }
+
     function _min(uint x, uint y) internal pure returns (uint) {
         return x > y ? y : x;
     }
@@ -471,6 +476,7 @@ contract TefiVault is Ownable, Pausable, ReentrancyGuard {
     function payout(uint _amount) external nonReentrant {
         asset.safeTransferFrom(msg.sender, address(this), _amount);
         profits += _amount;
+        dailyProfit[block.timestamp / 1 days * 1 days] += _amount;
     }
 
     function clearExpiredUsers(uint _count) external onlyOwner nonReentrant {
