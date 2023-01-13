@@ -453,7 +453,7 @@ contract TefiVault is Ownable, Pausable, ReentrancyGuard {
             underlying -= (_lose - profits);
             profits = 0;
         }
-        asset.safeTransfer(strategy, toInvest);
+        if (toInvest > 0) asset.safeTransfer(strategy, toInvest);
     }
 
     function closed() external onlyStrategy whenPaused {
