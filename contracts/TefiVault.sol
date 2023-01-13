@@ -35,6 +35,7 @@ contract TefiVault is Ownable, Pausable, ReentrancyGuard {
     uint public profits;
     uint public boostFund;
     mapping (uint => uint) public dailyProfit;
+    mapping (uint => uint) public dailyLoss;
 
     mapping(address => UserInfo) public users;
     mapping(address => address) public referrals;
@@ -60,6 +61,10 @@ contract TefiVault is Ownable, Pausable, ReentrancyGuard {
     event WithdrawnAll(address indexed user, uint amount);
     event Claimed(address indexed user, uint amount);
     event Compounded(address indexed user, uint amount);
+
+    event Lost(uint amount);
+    event Payout(uint amount, uint profit);
+    event Refilled(uint amount);
 
     modifier onlyStrategy {
         require (msg.sender == strategy, "!permission");
@@ -162,6 +167,20 @@ contract TefiVault is Ownable, Pausable, ReentrancyGuard {
     function totalEarned() external view returns (uint) {
         uint totalBal = balance();
         return totalBal > totalSupply ? (totalBal - totalSupply) : 0;
+    }
+
+    function todayProfit() external view returns (uint) {
+        return dailyProfit[block.timestamp / 1 days * 1 days];
+    }
+
+    function totalLoss() public view returns (uint) {
+        uint totalAvailable = underlying + available() - profits;
+        uint _totalSupply = totalSupply + boostFund;
+        return _totalSupply > totalAvailable ? (_totalSupply - totalAvailable) : 0;
+    }
+
+    function todayLoss() external view returns (uint) {
+        return dailyLoss[block.timestamp / 1 days * 1 days];
     }
 
     function checkExpiredUsers() external view returns (uint, address[] memory) {
@@ -275,7 +294,7 @@ contract TefiVault is Ownable, Pausable, ReentrancyGuard {
         UserInfo storage user = users[msg.sender];
         uint principal = principalOf(msg.sender);
         require (principal >= _amount, "exceeded amount");
-        require (_amount <= available()- profits, "exceeded withdrawable amount");
+        require (_amount <= available(), "exceeded withdrawable amount");
         
         uint share = _min((_amount * totalShare / balance()), user.share);
 
@@ -305,7 +324,7 @@ contract TefiVault is Ownable, Pausable, ReentrancyGuard {
         uint left = availableEarned - (_earned * 95 / 100);
         
         uint _amount = user.share * balance() / totalShare;
-        require (_amount - availableEarned <= available() - profits, "exceeded withdrawable amount");
+        require (_amount - availableEarned <= available(), "exceeded withdrawable amount");
 
         totalShare -= user.share;
         totalSupply -= user.amount;
@@ -432,28 +451,23 @@ contract TefiVault is Ownable, Pausable, ReentrancyGuard {
         return keepBal - curBal;
     }
 
-    function todayProfit() external view returns (uint) {
-        return dailyProfit[block.timestamp / 1 days * 1 days];
-    }
-
     function _min(uint x, uint y) internal pure returns (uint) {
         return x > y ? y : x;
     }
 
-    function reportLost(uint _lose) external onlyStrategy nonReentrant {
-        require (_lose <= totalSupply / 2, "wrong lose report");
-        // totalSupply -= _lose;
-        // boostFund -= _lose * boostFund / (underlying + available());
-        uint toInvest;
-        if (_lose <= profits) {
-            toInvest = _lose;
-            profits -= _lose;
+    function reportLost(uint _loss) external onlyStrategy nonReentrant {
+        require (_loss <= totalSupply / 2, "wrong lose report");
+        uint toInvest = _loss;
+        if (_loss <= profits) {
+            profits -= _loss;
         } else {
             toInvest = profits;
-            underlying -= (_lose - profits);
+            underlying -= (_loss - profits);
             profits = 0;
         }
-        if (toInvest > 0) asset.safeTransfer(strategy, toInvest);
+        asset.safeTransfer(strategy, toInvest);
+        
+        emit Lost(_loss);
     }
 
     function closed() external onlyStrategy whenPaused {
@@ -465,18 +479,34 @@ contract TefiVault is Ownable, Pausable, ReentrancyGuard {
         require (_amount <= underlying, "exceeded amount");
         asset.safeTransferFrom(msg.sender, address(this), _amount);
         underlying -= _amount;
+
+        emit Refilled(_amount);
     }
 
     function autoRefill() external onlyStrategy nonReentrant {
         uint amount = refillable();
         asset.safeTransferFrom(msg.sender, address(this), amount);
         underlying -= amount;
+
+        emit Refilled(amount);
     }
 
     function payout(uint _amount) external nonReentrant {
-        asset.safeTransferFrom(msg.sender, address(this), _amount);
-        profits += _amount;
         dailyProfit[block.timestamp / 1 days * 1 days] += _amount;
+
+        uint _totalLoss = totalLoss();
+        uint _payout = _amount;
+        if (_payout > _totalLoss) _payout -= _totalLoss;
+        else _payout = 0;
+        profits += _payout;
+        
+        if (_payout > 0) {
+            asset.safeTransferFrom(msg.sender, address(this), _payout);
+        }
+
+        underlying += (_amount - _payout);
+
+        emit Payout(_amount, _payout);
     }
 
     function clearExpiredUsers(uint _count) external onlyOwner nonReentrant {
