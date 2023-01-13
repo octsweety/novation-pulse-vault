@@ -523,7 +523,7 @@ contract TefiVault is Ownable, Pausable, ReentrancyGuard {
             if (users[user].expireAt + expireDelta > block.timestamp) continue;
             
             uint bal = balanceOf(user);
-            if (available() - profits < bal) continue; // check over-withdrawal
+            if (available() < bal) continue; // check over-withdrawal
             
             _withdrawAll(user, false);
             wallets[count] = user;
