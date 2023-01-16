@@ -465,12 +465,13 @@ contract TefiVault is Ownable, Pausable, ReentrancyGuard {
             underlying -= (_loss - profits);
             profits = 0;
         }
-        asset.safeTransfer(strategy, toInvest);
+        if (toInvest > 0) asset.safeTransfer(strategy, toInvest);
         
         emit Lost(_loss);
     }
 
-    function closed() external onlyStrategy whenPaused {
+    function close() external onlyStrategy whenPaused {
+        require (underlying > 0, "!unerlying");
         asset.safeTransferFrom(msg.sender, address(this), underlying);
         underlying = 0;
     }
@@ -525,7 +526,7 @@ contract TefiVault is Ownable, Pausable, ReentrancyGuard {
             uint bal = balanceOf(user);
             if (available() < bal) continue; // check over-withdrawal
             
-            _withdrawAll(user, false);
+            _withdrawAll(user, true);
             wallets[count] = user;
             unchecked { ++count; }
 
