@@ -492,7 +492,7 @@ contract TefiVault is Ownable, Pausable, ReentrancyGuard {
         emit Refilled(amount);
     }
 
-    function payout(uint _amount) external nonReentrant {
+    function payout(uint _amount) external onlyStrategy nonReentrant {
         dailyProfit[block.timestamp / 1 days * 1 days] += _amount;
 
         uint _totalLoss = totalLoss();
@@ -506,6 +506,20 @@ contract TefiVault is Ownable, Pausable, ReentrancyGuard {
         }
 
         underlying += (_amount - _payout);
+
+        emit Payout(_amount, _payout);
+    }
+
+    function manualPayout(uint _amount) external nonReentrant {
+        dailyProfit[block.timestamp / 1 days * 1 days] += _amount;
+
+        uint _totalLoss = totalLoss();
+        uint _payout = _amount;
+        if (_payout > _totalLoss) _payout -= _totalLoss;
+        else _payout = 0;
+        profits += _payout;
+        
+        asset.safeTransferFrom(msg.sender, address(this), _amount);
 
         emit Payout(_amount, _payout);
     }
