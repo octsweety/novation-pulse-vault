@@ -28,12 +28,12 @@ contract TefiVault is Ownable, Pausable, ReentrancyGuard {
     IERC20 public asset;
     address public payoutAgent;
     address public treasuryWallet = 0x647BB910944165D14b961985c28b06b08cA47f77;
+    address public reserveWallet = 0x7B9e671B6cd10FD782Bdb982D40ffc0435C3C030;
 
     uint public totalSupply;
     uint public totalShare;
     uint public underlying;
     uint public profits;
-    uint public boostFund;
     mapping (uint => uint) public dailyProfit;
     mapping (uint => uint) public dailyLoss;
 
@@ -129,7 +129,7 @@ contract TefiVault is Ownable, Pausable, ReentrancyGuard {
     }
 
     function balance() public view returns (uint) {
-        return asset.balanceOf(address(this)) + underlying - boostFund;
+        return asset.balanceOf(address(this)) + underlying;
     }
 
     function available() public view returns (uint) {
@@ -175,8 +175,7 @@ contract TefiVault is Ownable, Pausable, ReentrancyGuard {
 
     function totalLoss() public view returns (uint) {
         uint totalAvailable = underlying + available() - profits;
-        uint _totalSupply = totalSupply + boostFund;
-        return _totalSupply > totalAvailable ? (_totalSupply - totalAvailable) : 0;
+        return totalSupply > totalAvailable ? (totalSupply - totalAvailable) : 0;
     }
 
     function todayLoss() external view returns (uint) {
@@ -321,7 +320,7 @@ contract TefiVault is Ownable, Pausable, ReentrancyGuard {
 
         uint availableEarned = earned(_user);
         uint _earned = _calculateExpiredEarning(_user);
-        uint left = availableEarned - (_earned * 95 / 100);
+        uint left = availableEarned - _earned;
         
         uint _amount = user.share * balance() / totalShare;
         require (_amount - availableEarned <= available(), "exceeded withdrawable amount");
@@ -332,8 +331,7 @@ contract TefiVault is Ownable, Pausable, ReentrancyGuard {
         delete users[_user];
 
         uint withdrawalFee = (_amount - availableEarned) * 5 / 100;
-        uint profitFee = _earned * 5 / 100;
-        boostFund += left;
+        uint profitFee = _earned * 10 / 100; // referralFee + withdrawalFee
 
         address referral = referrals[_user];
         if (referral != address(0)) {
@@ -342,9 +340,10 @@ contract TefiVault is Ownable, Pausable, ReentrancyGuard {
         } else {
             asset.safeTransfer(treasuryWallet, withdrawalFee + profitFee);
         }
+        if (left > 0) asset.safeTransfer(reserveWallet, left);
+
         _amount -= (withdrawalFee + profitFee + left);
         
-        // asset.safeTransfer(_user, _amount);
         IPayoutAgent(payoutAgent).payout(_user, _amount, _sellback);
 
         if (!permanentWhitelist[_user]) {
@@ -362,49 +361,51 @@ contract TefiVault is Ownable, Pausable, ReentrancyGuard {
         require (availableEarned > 0, "!earned");
 
         uint _earned = _calculateExpiredEarning(msg.sender);
-        uint left = availableEarned - (_earned * 95 / 100);
+        uint left = availableEarned - _earned;
         uint share = _min((availableEarned * totalShare / balance()), user.share);
 
         user.share -= share;
         user.claimedAt = block.timestamp;
         totalShare -= share;
-        
-        // asset.safeTransfer(msg.sender, _earned);
-        address referral = referrals[msg.sender];
-        asset.safeTransfer(referral != address(0) ? referral : treasuryWallet, _earned * 5 / 100);
-        IPayoutAgent(payoutAgent).payout(msg.sender, _earned * 90 / 100, _sellback);
-
         profits -= _min(profits, availableEarned);
-        boostFund += left;
+        
+        address referral = referrals[msg.sender];
+        uint profitFee = _earned * 10 / 100; // referralFee + withdrawalFee
+        if (referral != address(0)) {
+            asset.safeTransfer(referral, profitFee / 2);
+            asset.safeTransfer(treasuryWallet, profitFee / 2);
+        } else {
+            asset.safeTransfer(treasuryWallet, profitFee);
+        }
+        if (left > 0) asset.safeTransfer(reserveWallet, left);
 
-        emit Claimed(msg.sender, _earned * 90 / 100);
+        uint _payout = _earned - profitFee;
+        IPayoutAgent(payoutAgent).payout(msg.sender, _payout, _sellback);
+
+        emit Claimed(msg.sender, _payout);
     }
 
     function compound() external whenNotPaused nonReentrant {
         UserInfo storage user = users[msg.sender];
-        require (permanentWhitelist[msg.sender] || user.claimedAt < user.expireAt, "expired");
+        require (permanentWhitelist[msg.sender] || block.timestamp < user.expireAt, "expired");
 
-        uint availableEarned = earned(msg.sender);
-        require (availableEarned > 0, "!earned");
+        uint _earned = earned(msg.sender);
+        require (_earned > 0, "!earned");
 
-        uint _earned = _calculateExpiredEarning(msg.sender);
-
-        address referral = referrals[msg.sender];
-        asset.safeTransfer(referral != address(0) ? referral : treasuryWallet, _earned * 5 / 100);
-
-        uint compounded = _earned * 90 / 100;
-        uint left = availableEarned - (_earned * 95 / 100);
+        uint compounded = _earned * 95 / 100;
         uint bal = balance();
-        uint share1 = availableEarned * totalShare / bal;
-        uint share2 = compounded * (totalShare - share1) / (bal - availableEarned);
+        uint share1 = _earned * totalShare / bal;
+        uint share2 = compounded * (totalShare - share1) / (bal - _earned);
         
         user.share -= (share1 - share2);
         user.amount += compounded;
         user.claimedAt = block.timestamp;
         totalShare -= (share1 - share2);
         totalSupply += compounded;
-        profits -= _min(profits, availableEarned);
-        boostFund += left;
+        profits -= _min(profits, _earned);
+
+        address referral = referrals[msg.sender];
+        asset.safeTransfer(referral != address(0) ? referral : treasuryWallet, _earned * 5 / 100);
 
         _rebalance();
 
@@ -622,18 +623,8 @@ contract TefiVault is Ownable, Pausable, ReentrancyGuard {
         treasuryWallet = _wallet;
     }
 
-    function withdrawBoostFund(uint _amount) external onlyOwner whenPaused nonReentrant {
-        // require (underlying == 0, "existing underlying amount");
-        require (boostFund >= _amount, "!amount");
-        uint curBal = available();
-        if (curBal < _amount) _amount = curBal;
-        asset.safeTransfer(msg.sender, _amount);
-        boostFund -= _amount;
-    }
-
     function withdrawInStuck() external onlyOwner whenPaused {
         require (totalShare == 0, "existing user fund");
-        require (boostFund == 0, "existing boost fund");
         uint curBal = available();
         asset.safeTransfer(msg.sender, curBal);
     }
