@@ -27,7 +27,7 @@ contract TefiVault is Ownable, Pausable, ReentrancyGuard {
     address public strategy;
     IERC20 public asset;
     address public payoutAgent;
-    address public treasuryWallet = 0x647BB910944165D14b961985c28b06b08cA47f77;
+    address public treasuryWallet = 0x63F0984f33538c779F8645D07eEe5b9682fdbb08;
     address public reserveWallet = 0x7B9e671B6cd10FD782Bdb982D40ffc0435C3C030;
 
     uint public totalSupply;
