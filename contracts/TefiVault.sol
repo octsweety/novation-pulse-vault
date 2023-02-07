@@ -128,6 +128,10 @@ contract TefiVault is Ownable, Pausable, ReentrancyGuard {
         return _referrals;
     }
 
+    function canBeRefered(address _wallet) external view returns(bool) {
+        return invested[_wallet];
+    }
+
     function balance() public view returns (uint) {
         return asset.balanceOf(address(this)) + underlying;
     }
