@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-pragma solidity ^0.8.1;
+pragma solidity >=0.8.0;
 
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/security/Pausable.sol";
@@ -24,16 +24,21 @@ contract Strategy is Ownable, Pausable, ReentrancyGuard {
     IERC20 public asset;
     address public operator;
 
-    address public traderWallet;
-    address public devWallet;
-    address public teamWallet;
-
     mapping (address => uint) public cexWeights;
     CexInfo[] public cexs;
 
-    uint public fee = 150;
-    uint public devFee = 15;
-    uint public traderFee = 50;
+    address public traderWallet;
+    address public platformWallet;
+    address public treasuryWallet;
+    address public insuranceWallet;
+    address public devWallet;
+
+    uint public totalFee = 150;          // 15% totally
+    uint public traderFee = 50;     // 5%
+    uint public platformFee = 45;   // 4.5%
+    uint public treasuryFee = 20;   // 2%
+    uint public insuranceFee = 20;  // 2%
+    uint public devFee = 15;        // 1.5%
 
     modifier onlyVault {
         require (msg.sender == address(vault), "!vault");
@@ -62,8 +67,22 @@ contract Strategy is Ownable, Pausable, ReentrancyGuard {
         asset.safeApprove(_vault, type(uint).max);
     }
 
-    function setFee(uint _fee) external onlyOwner {
-        fee = _fee;
+    function setFee(
+        uint _total,
+        uint _trader,
+        uint _platform,
+        uint _treasury,
+        uint _insurance,
+        uint _dev
+    ) external onlyOwner {
+        require (_trader + _platform + _treasury + _insurance + _dev == _total, "!fees");
+        
+        totalFee = _total;
+        traderFee = _trader;
+        platformFee = _platform;
+        treasuryFee = _treasury;
+        insuranceFee = _insurance;
+        devFee = _dev;
     }
 
     function addCex(address _addr, string memory _name) external onlyOperator {
@@ -147,7 +166,7 @@ contract Strategy is Ownable, Pausable, ReentrancyGuard {
         asset.safeTransferFrom(operator, address(this), _amount);
         cexs[_cexId].profit += _amount;
 
-        uint feeAmount = _amount * fee / 1000;
+        uint feeAmount = _amount * totalFee / 1000;
         shareFee(feeAmount);
 
         vault.payout(_amount - feeAmount);
@@ -157,11 +176,16 @@ contract Strategy is Ownable, Pausable, ReentrancyGuard {
     }
 
     function shareFee(uint _amount) internal {
-        uint traderAmount = _amount * traderFee / (traderFee + devFee);
-        uint devAmount = _amount * devFee / (traderFee + devFee);
+        _transferFee(traderWallet, _amount, traderFee);
+        _transferFee(platformWallet, _amount, platformFee);
+        _transferFee(treasuryWallet, _amount, treasuryFee);
+        _transferFee(insuranceWallet, _amount, insuranceFee);
+        _transferFee(devWallet, _amount, devFee);
+    }
 
-        asset.safeTransfer(traderWallet, traderAmount);
-        asset.safeTransfer(devWallet, devAmount);
+    function _transferFee(address _wallet, uint _total, uint _fee) internal {
+        uint amount = _total * _fee / totalFee;
+        asset.safeTransfer(_wallet, amount);
     }
 
     function reportLoss(uint _amount, uint _cexId) external onlyOperator nonReentrant {
