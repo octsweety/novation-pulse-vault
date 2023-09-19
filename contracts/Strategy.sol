@@ -27,18 +27,24 @@ contract Strategy is Ownable, Pausable, ReentrancyGuard {
     mapping (address => uint) public cexWeights;
     CexInfo[] public cexs;
 
-    address public traderWallet;
-    address public platformWallet;
-    address public treasuryWallet;
-    address public insuranceWallet;
-    address public devWallet;
+    address public traderWallet = 0x1aa101455b81FA63C2938026100a035Effd9CF39;
+    address public platformWallet = 0x688bd574e0c3DC9E74BC0D5BD788DB61778A99bD;
+    address public treasuryWallet = 0x703644b42027C89B1dad99d86906d913216Af41B;
+    address public insuranceWallet = 0x8DfDca05002c8c6252aF9725c76E37488373FeE3;
+    address public devWallet = 0xc8856834CBaD45928E0784dED6eb77AE483c3400;
 
-    uint public totalFee = 150;          // 15% totally
+    uint public totalFee = 150;     // 15% totally
     uint public traderFee = 50;     // 5%
     uint public platformFee = 45;   // 4.5%
     uint public treasuryFee = 20;   // 2%
     uint public insuranceFee = 20;  // 2%
     uint public devFee = 15;        // 1.5%
+
+    event Lost(uint indexed cexId, uint amount);
+    event Earned(uint indexed cexId, uint amount);
+    event Refilled(uint indexed cexId, uint amount);
+    event Deposited(uint amount);
+    event Closed(uint amount);
 
     modifier onlyVault {
         require (msg.sender == address(vault), "!vault");
@@ -85,6 +91,26 @@ contract Strategy is Ownable, Pausable, ReentrancyGuard {
         devFee = _dev;
     }
 
+    function setTraderWallet(address _wallet) external onlyOwner {
+        traderWallet = _wallet;
+    }
+
+    function setPlatformWallet(address _wallet) external onlyOwner {
+        platformWallet = _wallet;
+    }
+
+    function setTreasuryWallet(address _wallet) external onlyOwner {
+        treasuryWallet = _wallet;
+    }
+
+    function setInsuranceWallet(address _wallet) external onlyOwner {
+        insuranceWallet = _wallet;
+    }
+
+    function setDevWallet(address _wallet) external onlyOwner {
+        devWallet = _wallet;
+    }
+
     function addCex(address _addr, string memory _name) external onlyOperator {
         cexs.push(CexInfo({
             addr: _addr,
@@ -103,10 +129,11 @@ contract Strategy is Ownable, Pausable, ReentrancyGuard {
         return cexs.length;
     }
 
-    function updateCex(uint _index, address _addr) external onlyOperator {
+    function updateCex(uint _index, address _addr, string calldata _name) external onlyOperator {
         require (_index < cexs.length, "!index");
 
         cexs[_index].addr = _addr;
+        cexs[_index].name = _name;
     }
 
     function updateCexWeights(uint[] calldata _weights) external onlyOperator nonReentrant {
@@ -137,9 +164,11 @@ contract Strategy is Ownable, Pausable, ReentrancyGuard {
         require (bal >= _amount, "!amount");
 
         // If someone sent fund directly here, call payout for the profit
-        if (bal > _amount) vault.payout(bal - _amount);
+        if (bal > _amount) vault.reportProfit(bal - _amount);
 
         _deposit();
+
+        emit Deposited(bal - _amount);
     }
 
     function _deposit() internal {
@@ -167,12 +196,21 @@ contract Strategy is Ownable, Pausable, ReentrancyGuard {
         cexs[_cexId].profit += _amount;
 
         uint feeAmount = _amount * totalFee / 1000;
-        shareFee(feeAmount);
+        if (feeAmount > 0) shareFee(feeAmount);
 
-        vault.payout(_amount - feeAmount);
+        vault.reportProfit(_amount - feeAmount);
 
-        // If there was any loss before, some amount stays here to cover previous loss
-        _deposit();
+        emit Earned(_cexId, _amount);
+    }
+
+    function reportLoss(uint _amount, uint _cexId) external onlyOperator nonReentrant {
+        require (_cexId < cexs.length, "!index");
+        require (cexs[_cexId].underlying >= _amount, "!loss amount");
+        
+        vault.reportLoss(_amount);
+        cexs[_cexId].underlying -= _amount;
+
+        emit Lost(_cexId, _amount);
     }
 
     function shareFee(uint _amount) internal {
@@ -188,17 +226,6 @@ contract Strategy is Ownable, Pausable, ReentrancyGuard {
         asset.safeTransfer(_wallet, amount);
     }
 
-    function reportLoss(uint _amount, uint _cexId) external onlyOperator nonReentrant {
-        require (_cexId < cexs.length, "!index");
-        require (cexs[_cexId].underlying >= _amount, "!loss amount");
-        
-        vault.reportLoss(_amount);
-        cexs[_cexId].underlying -= _amount;
-
-        // After reported loss, vault might send covering fund straightly
-        _deposit();
-    }
-
     function refill(uint _amount, uint _cexId) public onlyOperator nonReentrant {
         require (_cexId < cexs.length, "!index");
         require (cexs[_cexId].underlying >= _amount, "!cex amount");
@@ -208,6 +235,32 @@ contract Strategy is Ownable, Pausable, ReentrancyGuard {
         asset.safeTransferFrom(operator, address(this), _amount);
         vault.refill(_amount);
         cexs[_cexId].underlying -= _amount;
+
+        emit Refilled(_cexId, _amount);
+    }
+
+    function close() external onlyOperator whenPaused nonReentrant {
+        uint _underlying = underlying();
+        uint _operatorBal = asset.balanceOf(operator);
+        uint _currentBal = asset.balanceOf(address(this));
+        require (_operatorBal >= _underlying, "!underlying");
+
+        if (_currentBal > 0) {
+            vault.reportProfit(_currentBal);
+        }
+
+        if (_underlying > 0) {
+            asset.safeTransferFrom(operator, address(this), _underlying);
+        }
+        
+        vault.close();
+
+        for (uint i = 0; i < cexs.length; i++) {
+            cexs[i].underlying = 0;
+            // cexs[i].profit = 0;
+        }
+
+        emit  Closed(_underlying);
     }
 
     function refillAll(uint _cexId) external onlyOperator {
