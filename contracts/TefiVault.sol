@@ -38,6 +38,7 @@ contract TefiVault is Ownable, Pausable, ReentrancyGuard {
     uint public totalShare;
     uint public underlying;
     uint public profits;
+    uint public totalProfits;
     uint public totalLoss;
     mapping (uint => uint) public dailyProfit;
     mapping (uint => uint) public dailyLoss;
@@ -517,6 +518,7 @@ contract TefiVault is Ownable, Pausable, ReentrancyGuard {
 
         if (_profit > totalLoss) {
             profits += (_profit - totalLoss);
+            totalProfits += (_profit - totalLoss);
             totalLoss = 0;
         } else {
             totalLoss -= _profit;
