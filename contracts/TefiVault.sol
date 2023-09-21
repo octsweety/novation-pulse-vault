@@ -223,7 +223,7 @@ contract TefiVault is Ownable, Pausable, ReentrancyGuard {
             uint _amount = _amounts[i];
             address _user = _users[i];
             UserInfo storage user = users[_user];
-            bool isVip = vipWhitelist[msg.sender];
+            bool isVip = vipWhitelist[_user];
             require (_amount > 0, "!amount");
 
             uint share;
@@ -635,6 +635,7 @@ contract TefiVault is Ownable, Pausable, ReentrancyGuard {
                 if (user.expireAt < block.timestamp) user.claimedAt = block.timestamp;
             }
             vipWhitelist[_user] = _flag;
+            if (_flag == true && !investWhitelist[_user]) investWhitelist[_user] = true;
         }
     }
 
