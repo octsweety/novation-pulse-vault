@@ -50,6 +50,7 @@ contract TefiVault is Ownable, Pausable, ReentrancyGuard {
     mapping(address => bool) public investWhitelist;
     mapping(address => bool) public permanentWhitelist;
     mapping(address => bool) public vipWhitelist;
+    mapping(address => bool) public eliteWhitelist;
     mapping(address => bool) public agents;
 
     uint public rebalanceRate = 20;
@@ -89,7 +90,7 @@ contract TefiVault is Ownable, Pausable, ReentrancyGuard {
             totalShare -= user.share;
             delete users[msg.sender];
 
-            if (!permanentWhitelist[msg.sender]) {
+            if (!permanentWhitelist[msg.sender] && !vipWhitelist[msg.sender] && !eliteWhitelist[msg.sender]) {
                 investWhitelist[msg.sender] = false;
             }
         }
@@ -371,7 +372,7 @@ contract TefiVault is Ownable, Pausable, ReentrancyGuard {
         
         IPayoutAgent(payoutAgent).payout(_user, _amount, _sellback);
 
-        if (!permanentWhitelist[_user] && !vipWhitelist[_user]) {
+        if (!permanentWhitelist[_user] && !vipWhitelist[_user] && !eliteWhitelist[_user]) {
             investWhitelist[_user] = false;
         }
 
@@ -635,6 +636,15 @@ contract TefiVault is Ownable, Pausable, ReentrancyGuard {
                 if (user.expireAt < block.timestamp) user.claimedAt = block.timestamp;
             }
             vipWhitelist[_user] = _flag;
+            if (_flag == true && !investWhitelist[_user]) investWhitelist[_user] = true;
+        }
+    }
+
+    function setEliteWhitelist(address[] calldata _wallets, bool _flag) external onlyOwner {
+        require (!isPublic, "!private mode");
+        for (uint i = 0; i < _wallets.length; i++) {
+            address _user = _wallets[i];
+            eliteWhitelist[_user] = _flag;
             if (_flag == true && !investWhitelist[_user]) investWhitelist[_user] = true;
         }
     }
