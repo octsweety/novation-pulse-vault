@@ -162,9 +162,6 @@ contract Strategy is Ownable, Pausable, ReentrancyGuard {
         uint bal = asset.balanceOf(address(this));
         require (bal >= _amount, "!amount");
 
-        // If someone sent fund directly here, call payout for the profit
-        if (bal > _amount) vault.reportProfit(bal - _amount);
-
         _deposit();
 
         emit Deposited(bal - _amount);
@@ -192,6 +189,10 @@ contract Strategy is Ownable, Pausable, ReentrancyGuard {
         require (_operatorBal >= _amount, "!profit fund");
 
         asset.safeTransferFrom(operator, address(this), _amount);
+
+        // If someone sent the fund directly here, it will be added to the profit
+        _amount = asset.balanceOf(address(this));
+
         cexs[_cexId].profit += _amount;
 
         uint feeAmount = _amount * totalFee / 1000;
