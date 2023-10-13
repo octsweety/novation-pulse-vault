@@ -11,7 +11,8 @@ export const address = {
         mocVault: "0xA2047f305EE992CB6f3FF5A308AccAFeFFb7a2c4",
         // payoutAgent: "0x8C61553Ed7Baf005ec6e04ea0Abb1eA06483E68d"
         payoutAgent: "0x7cf047f183A11AD5ff1F3572B6300B46eb00D39C",
-        strategy: "0xbf2eE6B75d5aA80265ac1D045104eFFb46115bBE",
+        // strategy: "0xbf2eE6B75d5aA80265ac1D045104eFFb46115bBE",
+        strategy: "0x885880b226aDF7783a246f89284B5D5F67d76E84",
         vault: "0x66AD7EF241d6773C24444497b84e40c10fe2521B"
     },
     testnet: {
