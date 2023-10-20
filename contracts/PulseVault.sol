@@ -16,13 +16,39 @@ interface IStrategy {
     function deposit(uint amount) external;
 }
 
+interface IVault {
+    function userCount() external view returns (uint);
+    function getUserList() external view returns (address[] memory);
+    function users(address) external view returns (
+        uint amount,
+        uint share,
+        uint expireAt,
+        uint depositedAt,
+        uint claimedAt
+    );
+    function underlying() external view returns (uint);
+    function totalSupply() external view returns (uint);
+    function totalShare() external view returns (uint);
+    function profits() external view returns (uint);
+    function totalProfits() external view returns (uint);
+    function totalLoss() external view returns (uint);
+    function referrals(address) external view returns (address);
+    function invested(address) external view returns (bool);
+    function investWhitelist(address) external view returns (bool);
+    function permanentWhitelist(address) external view returns (bool);
+    function vipWhitelist(address) external view returns (bool);
+    function eliteWhitelist(address) external view returns (bool);
+}
+
 contract PulseVault is Ownable, Pausable, ReentrancyGuard {
     using SafeERC20 for IERC20;
     using EnumerableSet for EnumerableSet.AddressSet;
 
     struct UserInfo {
         uint amount;
+        uint prevAmount;
         uint share;
+        uint prevShare;
         uint expireAt;
         uint depositedAt;
         uint claimedAt;
@@ -53,8 +79,8 @@ contract PulseVault is Ownable, Pausable, ReentrancyGuard {
     mapping(address => bool) public eliteWhitelist;
     mapping(address => bool) public agents;
 
-    uint public rebalanceRate = 20;
-    uint public farmPeriod = 60 days;
+    uint public rebalanceRate = 15;
+    uint public farmPeriod = 80 days;
     uint public farmVipPeriod = 110 days;
     uint public expireDelta = 2 days;
     uint public maxSupply = type(uint).max;
@@ -65,6 +91,7 @@ contract PulseVault is Ownable, Pausable, ReentrancyGuard {
     uint public withdrawalFee;     // zero in default
     uint public claimFee = 5;
     uint public referralFee = 3;
+    address[] pendings;
 
     bool public lockedWithdrawal;
     bool locked;
@@ -177,10 +204,24 @@ contract PulseVault is Ownable, Pausable, ReentrancyGuard {
 
     function earned(address _user) public view returns (uint) {
         UserInfo storage user = users[_user];
-        uint bal = balanceOf(_user);
-        uint _earned = user.amount < bal ? (bal - user.amount) : 0;
+        uint amount = user.amount;
+        uint share = user.share;
+        uint _totalSupply = totalSupply;
+        uint _totalShare = totalShare;
+        
+        if (_isPending(_user) && user.amount > user.prevAmount
+        ) {
+            share = user.prevShare;
+            amount = user.prevAmount;
+            _totalSupply = totalSupply - user.amount + amount;
+            _totalShare = totalShare - user.share + share;
+        }
+
+        // uint bal = balanceOf(_user);
+        uint bal = share * (balance() - user.amount + amount) / _totalShare;
+        uint _earned = amount < bal ? (bal - amount) : 0;
         uint _maxSupply = vipWhitelist[_user] ? maxVipSupply : maxUserSupply;
-        if (user.amount > _maxSupply) return _earned * _maxSupply / user.amount;
+        if (amount > _maxSupply) return _earned * _maxSupply / amount;
         return _earned;
     }
 
@@ -243,7 +284,10 @@ contract PulseVault is Ownable, Pausable, ReentrancyGuard {
             require (user.amount + _amount <= (isVip ? maxVipSupply : maxUserSupply), "exeeded user max supply");
 
             if (user.depositedAt == 0) user.depositedAt = block.timestamp;
+            pendings.push(_user);
 
+            user.prevAmount = user.amount;
+            user.prevShare = user.share;
             user.share += share;
             user.amount += _amount;
             investWhitelist[_user] = true;
@@ -297,7 +341,10 @@ contract PulseVault is Ownable, Pausable, ReentrancyGuard {
         asset.transferFrom(msg.sender, address(this), _amount);
 
         if (user.depositedAt == 0) user.depositedAt = block.timestamp;
+        pendings.push(msg.sender);
 
+        user.prevAmount = user.amount;
+        user.prevShare = user.share;
         user.share += share;
         user.amount += _amount;
         totalShare += share;
@@ -432,6 +479,10 @@ contract PulseVault is Ownable, Pausable, ReentrancyGuard {
         bool isVip = vipWhitelist[msg.sender];
         require (user.amount + compounded <= (isVip ? maxVipSupply : maxUserSupply), "exeeded user max supply");
         
+        pendings.push(msg.sender);
+        user.prevAmount = user.amount;
+        user.prevShare = user.share;
+        
         user.share -= (share1 - share2);
         user.amount += compounded;
         user.claimedAt = block.timestamp;
@@ -507,7 +558,9 @@ contract PulseVault is Ownable, Pausable, ReentrancyGuard {
             profits = 0;
         }
         underlying -= _loss;
-        
+
+        delete pendings;
+
         emit Lost(_loss);
     }
 
@@ -527,7 +580,16 @@ contract PulseVault is Ownable, Pausable, ReentrancyGuard {
             totalLoss -= _profit;
         }
 
+        delete pendings;
+
         emit Payout(_profit);
+    }
+
+    function _isPending(address _user) internal view returns (bool) {
+        for (uint i = 0; i < pendings.length; i++) {
+            if (pendings[i] == _user) return true;
+        }
+        return false;
     }
 
     function close() external onlyStrategy whenPaused {
@@ -714,5 +776,47 @@ contract PulseVault is Ownable, Pausable, ReentrancyGuard {
 
     function unpause() external onlyOwner {
         _unpause();
+    }
+
+    function migrate(address _vault) external onlyOwner {
+        IVault vault = IVault(_vault);
+
+        uint count = vault.userCount();
+        address[] memory _userList = vault.getUserList();
+        
+        for (uint i = 0; i < count; i++) {
+            address _user = _userList[i];
+            (
+                uint amount,
+                uint share,
+                uint expireAt,
+                uint depositedAt,
+                uint claimedAt
+            ) = vault.users(_user);
+            users[_user] = UserInfo(
+                amount,
+                0,
+                share,
+                0,
+                expireAt,
+                depositedAt,
+                claimedAt
+            );
+            referrals[_user] = vault.referrals(_user);
+            invested[_user] = vault.invested(_user);
+            investWhitelist[_user] = vault.investWhitelist(_user);
+            permanentWhitelist[_user] = vault.permanentWhitelist(_user);
+            vipWhitelist[_user] = vault.vipWhitelist(_user);
+            eliteWhitelist[_user] = vault.eliteWhitelist(_user);
+
+            userList.add(_user);
+        }
+
+        underlying = vault.underlying();
+        totalSupply = vault.totalSupply();
+        totalShare = vault.totalShare();
+        profits = vault.profits();
+        totalProfits = vault.totalProfits();
+        totalLoss = vault.totalLoss();
     }
 }
